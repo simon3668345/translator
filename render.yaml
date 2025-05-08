@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: libretranslate
+    env: docker
+    region: eu-central-1 # Doporučuji evropský region pro lepší odezvu v Evropě
+    dockerfilePath: Dockerfile
+    ports:
+      - 5000:5000
+    healthCheckPath: /health
