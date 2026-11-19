@@ -714,6 +714,10 @@
     else if (G.state === 'playing' || G.state === 'dying') drawHUD();
     else if (G.state === 'over') drawOver();
     else if (G.state === 'paused') drawPause();
+
+    G.ctx.imageSmoothingEnabled = false;
+    G.ctx.clearRect(0, 0, G.canvas.width, G.canvas.height);
+    G.ctx.drawImage(G.screen, 0, 0, G.canvas.width, G.canvas.height);
   };
 
   function drawCat() {

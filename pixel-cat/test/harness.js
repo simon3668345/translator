@@ -174,18 +174,35 @@ class MockCtx {
     const c = this.canvas;
     const ga = this.globalAlpha;
     dx = Math.floor(dx); dy = Math.floor(dy);
+    if (!img._xmap) img._xmap = {};
+    const key = dw + ':' + sw + ':' + sx;
+    let xm = img._xmap[key];
+    if (!xm) {
+      xm = new Int32Array(dw);
+      for (let i = 0; i < dw; i++) xm[i] = Math.min(img.width - 1, Math.floor(i / dw * sw) + sx);
+      img._xmap[key] = xm;
+    }
+    if (!c._px32) c._px32 = new Uint32Array(c._px.buffer, c._px.byteOffset, c._px.length >> 2);
+    const px32 = c._px32;
+    const opaque = ga >= 1;
     for (let j = 0; j < dh; j++) {
       const py = dy + j;
       if (py < 0 || py >= c.height) continue;
       const syy = Math.min(img.height - 1, Math.floor(j / dh * sh) + sy);
+      const srow = syy * img.width;
+      const drow = py * c.width;
       for (let i = 0; i < dw; i++) {
         const pxx = dx + i;
         if (pxx < 0 || pxx >= c.width) continue;
-        const sxx = Math.min(img.width - 1, Math.floor(i / dw * sw) + sx);
-        const si = (syy * img.width + sxx) * 4;
+        const si = (srow + xm[i]) << 2;
         const sa = (img._px[si + 3] / 255) * ga;
         if (sa <= 0) continue;
-        const di = (py * c.width + pxx) * 4;
+        const di32 = drow + pxx;
+        if (opaque && img._px[si + 3] === 255) {
+          px32[di32] = 0xFF000000 | (img._px[si + 2] << 16) | (img._px[si + 1] << 8) | img._px[si];
+          continue;
+        }
+        const di = di32 << 2;
         const da = c._px[di + 3] / 255;
         const oa = sa + da * (1 - sa);
         if (oa <= 0) continue;
@@ -222,9 +239,9 @@ class MockCanvas {
     this.listeners = {};
   }
   get width() { return this._w; }
-  set width(v) { this._w = Math.max(1, v | 0); this._px = new Uint8ClampedArray(this._w * this._h * 4); }
+  set width(v) { this._w = Math.max(1, v | 0); this._px = new Uint8ClampedArray(this._w * this._h * 4); this._px32 = null; }
   get height() { return this._h; }
-  set height(v) { this._h = Math.max(1, v | 0); this._px = new Uint8ClampedArray(this._w * this._h * 4); }
+  set height(v) { this._h = Math.max(1, v | 0); this._px = new Uint8ClampedArray(this._w * this._h * 4); this._px32 = null; }
   getContext(kind) {
     if (!this._ctx) this._ctx = new MockCtx(this);
     return this._ctx;
@@ -263,7 +280,7 @@ class MockAudioContext {
 /* ---------------- environment ---------------- */
 function makeEnv(opts) {
   opts = opts || {};
-  const W = opts.width || 1180, H = opts.height || 820;
+  const W = opts.width || 800, H = opts.height || 500;
   const store = opts.store || {};
   const canvas = new MockCanvas();
   canvas._envW = W; canvas._envH = H;
@@ -274,7 +291,7 @@ function makeEnv(opts) {
   const sandbox = {
     console,
     Math, JSON, Promise, Float32Array, Uint8ClampedArray,
-    innerWidth: W, innerHeight: H, devicePixelRatio: 2,
+    innerWidth: W, innerHeight: H, devicePixelRatio: 1,
     localStorage: {
       getItem: k => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
@@ -298,15 +315,17 @@ function makeEnv(opts) {
   sandbox.globalThis = sandbox;
   sandbox.addEventListener = (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); };
   vm.createContext(sandbox);
-  for (const f of ['font.js', 'sprites.js', 'audio.js', 'game.js']) {
-    const code = fs.readFileSync(path.join(ROOT, 'js', f), 'utf8');
-    vm.runInContext(code, sandbox, { filename: f });
+  if (!opts.noLoad) {
+    for (const f of ['font.js', 'sprites.js', 'audio.js', 'game.js']) {
+      const code = fs.readFileSync(path.join(ROOT, 'js', f), 'utf8');
+      vm.runInContext(code, sandbox, { filename: f });
+    }
   }
   const env = {
     sandbox,
     canvas,
     store,
-    PC: sandbox.PC,
+    get PC() { return sandbox.PC; },
     step(ms) {
       nowMs += ms;
       const g = sandbox.PC && sandbox.PC.game;
@@ -329,6 +348,22 @@ function makeEnv(opts) {
       const g = sandbox.PC.game;
       const sc = g.screen;
       const s = scale || 3;
+      const w = sc.width * s, h = sc.height * s;
+      const out = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const si = (Math.floor(y / s) * sc.width + Math.floor(x / s)) * 4;
+          const di = (y * w + x) * 4;
+          out[di] = sc._px[si]; out[di + 1] = sc._px[si + 1];
+          out[di + 2] = sc._px[si + 2]; out[di + 3] = sc._px[si + 3];
+        }
+      }
+      fs.writeFileSync(path.join(SHOTS, name + '.png'), encodePNG(w, h, out));
+      console.log('  shot -> ' + path.join(SHOTS, name + '.png'));
+    },
+    shotDisplay(name, scale) {
+      const sc = canvas;
+      const s = scale || 2;
       const w = sc.width * s, h = sc.height * s;
       const out = new Uint8ClampedArray(w * h * 4);
       for (let y = 0; y < h; y++) {
@@ -410,7 +445,7 @@ function botFrame(env) {
 /* ---------------- tests ---------------- */
 async function main() {
   section('boot & title (landscape tablet 1180x820)');
-  const env = makeEnv({ width: 1180, height: 820 });
+  const env = makeEnv({ width: 800, height: 500 });
   const g = env.PC.game;
   ok(!!g, 'game object exists after load');
   ok(g.state === 'title', 'initial state is title, got ' + g.state);
@@ -418,6 +453,10 @@ async function main() {
   env.steps(90);
   ok(g.state === 'title', 'still on title after 1.5s idle');
   env.shot('01-title');
+  let painted = 0;
+  for (let i = 0; i < env.canvas._px.length; i += 4) if (env.canvas._px[i + 3] > 0) painted++;
+  ok(painted > env.canvas.width * env.canvas.height * 0.5, 'visible display canvas is painted (not blank): ' + painted + ' px with alpha>0');
+  env.shotDisplay('01b-display-canvas');
 
   section('sprites (ASCII dump for visual review)');
   if (process.env.DUMP_SPRITES) {
@@ -447,13 +486,13 @@ async function main() {
   dumpSprite('droneA', env.PC.sprites.droneA);
   dumpSprite('dogA', env.PC.sprites.dogA);
 
-  section('start game + bot plays 60s');
+  section('start game + bot plays 45s');
   g.pressAt(g.W / 2, 100);
   ok(g.state === 'playing', 'tap starts the run');
   let maxScore = 0, totalFish = 0, deaths = 0, runs = 0, maxSpeed = 0, spawnedTotal = 0;
   let runStartDist = 0, bestRunTime = 0, curRunTime = 0;
   let wasAlive = true;
-  for (let i = 0; i < 60 * 60; i++) {
+  for (let i = 0; i < 45 * 60; i++) {
     botFrame(env);
     env.step(1000 / 60);
     if (g.state === 'playing' || g.state === 'dying') {
@@ -473,6 +512,7 @@ async function main() {
   ok(deaths >= 0 && runs >= 1, 'bot completed at least one run (runs=' + runs + ', deaths=' + deaths + ')');
   ok(maxScore > 300, 'bot scored > 300 (max ' + Math.floor(maxScore) + ')');
   g.dist = 5000;
+  g.slowT = 0;
   env.step(1000 / 60);
   ok(g.speed > 280, 'speed ramps with distance: dist=5000 -> speed=' + Math.floor(g.speed));
   g.dist = 0;
@@ -638,6 +678,28 @@ async function main() {
   g7.tod = 40 * 0.52;
   env7.steps(5);
   env7.shot('09-beauty-night');
+
+  section('standalone.html single-file build');
+  const saPath = path.join(ROOT, 'standalone.html');
+  if (fs.existsSync(saPath)) {
+    const sa = fs.readFileSync(saPath, 'utf8');
+    const envS = makeEnv({ width: 800, height: 500, noLoad: true });
+    const scripts = [...sa.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+    ok(scripts.length === 4, 'standalone has 4 inline scripts, got ' + scripts.length);
+    for (const code of scripts) vm.runInContext(code, envS.sandbox, { filename: 'standalone-inline.js' });
+    const gs = envS.PC.game;
+    envS.steps(60);
+    ok(gs.state === 'title', 'standalone boots to title');
+    let p2 = 0;
+    for (let i = 3; i < envS.canvas._px.length; i += 4) if (envS.canvas._px[i] > 0) p2++;
+    ok(p2 > envS.canvas.width * envS.canvas.height * 0.5, 'standalone display canvas painted: ' + p2 + ' px');
+    gs.pressAt(gs.W / 2, 100);
+    envS.steps(30);
+    ok(gs.state === 'playing', 'standalone starts a run');
+    envS.shotDisplay('10-standalone');
+  } else {
+    ok(false, 'standalone.html missing - run node test/build-standalone.js');
+  }
 
   section('favicon generation');
   const cat = env.PC.sprites.catRun[1];

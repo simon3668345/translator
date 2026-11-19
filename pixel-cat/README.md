@@ -8,12 +8,25 @@ banked forever so you can buy permanent upgrades and chase a new best score.
 
 ## Play
 
-Open `index.html` in any modern browser (works great on tablets, portrait or
-landscape). If GitHub Pages is enabled for this repo, it is also served at:
-
-`https://<your-username>.github.io/Random-number-generator2025/pixel-cat/`
-
 No build step, no dependencies, no network needed — plain HTML/CSS/JS.
+
+**Easiest on a tablet (fully offline, no deployment):**
+
+1. On the tablet, download the branch zip:
+   `https://github.com/simon3668345/translator/archive/refs/heads/vibe-pixel-cat-2afd8c.zip`
+2. Unzip it in the Files app, then open **`pixel-cat/index.html`** (or the
+   single-file **`pixel-cat/standalone.html`**) — it runs straight from `file://`.
+3. Optional: Share → "Add to Home Screen" to play fullscreen like an app.
+
+**Hosted:** serve the repo root with any static server and open `/pixel-cat/`
+(e.g. Netlify deploy preview / production site of this repo), or enable GitHub
+Pages on `main` and open `https://<username>.github.io/translator/pixel-cat/`.
+
+Regenerate the single-file build after editing sources:
+
+```bash
+node test/build-standalone.js   # writes pixel-cat/standalone.html
+```
 
 ## Controls
 
